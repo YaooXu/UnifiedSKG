@@ -1,5 +1,7 @@
 import collections
 import json
+import logging
+import os
 import time
 from typing import Any, Dict, List, Optional, Tuple, Union
 from typing import NamedTuple
@@ -31,6 +33,24 @@ if version.parse(torch.__version__) >= version.parse("1.6"):
     _is_native_amp_available = True
     from torch.cuda.amp import autocast
 
+from transformers.modeling_utils import unwrap_model
+from transformers.trainer_utils import speed_metrics
+from transformers.utils import is_peft_available, WEIGHTS_NAME
+from transformers import (
+    EvalPrediction,
+    GenerationConfig,
+    PreTrainedModel,
+    PreTrainedTokenizerBase,
+    Trainer,
+    TrainerCallback,
+    TrainingArguments,
+    AutoTokenizer,
+    logging,
+)
+from peft import PeftModel
+TRAINING_ARGS_NAME = "training_args.bin"
+
+logger = logging.get_logger(__name__)
 
 class EvalPrediction(NamedTuple):
     predictions: List[str]
@@ -295,6 +315,7 @@ class EvaluateFriendlySeq2SeqTrainer(transformers.trainer_seq2seq.Seq2SeqTrainer
         generated_tokens = self.model.generate(
             inputs["input_ids"],
             attention_mask=inputs["attention_mask"],
+            dist_mat=inputs['dist_mat'],
             **gen_kwargs,
         )
         # in case the batch is shorter than max length, the output should be padded
@@ -302,7 +323,7 @@ class EvaluateFriendlySeq2SeqTrainer(transformers.trainer_seq2seq.Seq2SeqTrainer
             generated_tokens = self._pad_tensors_to_max_len(generated_tokens, gen_kwargs["max_length"])
 
         with torch.no_grad():
-            if self.use_amp:
+            if self.use_apex:
                 with autocast():
                     outputs = model(**inputs)
             else:
@@ -352,3 +373,40 @@ class EvaluateFriendlySeq2SeqTrainer(transformers.trainer_seq2seq.Seq2SeqTrainer
 
     def _compute_metrics(self, eval_prediction: EvalPrediction, section) -> dict:
         return self.evaluator.evaluate(eval_prediction.predictions, eval_prediction.items, section)
+
+    def _save(self, output_dir: str | None = None, state_dict=None):
+        # If we are executing this function, we are the process zero, so we don't check for that.
+        output_dir = output_dir if output_dir is not None else self.args.output_dir
+        os.makedirs(output_dir, exist_ok=True)
+        logger.info(f"Saving model checkpoint to {output_dir}")
+
+        supported_classes = (PreTrainedModel,) if not is_peft_available() else (
+            PreTrainedModel, PeftModel)
+        # Save a trained model and configuration using `save_pretrained()`.
+        # They can then be reloaded using `from_pretrained()`
+        if not isinstance(self.model.pretrain_model, supported_classes):
+            _state_dict = self.model.pretrain_model.state_dict()
+
+            if isinstance(unwrap_model(self.model.pretrain_model), supported_classes):
+                unwrap_model(self.model.pretrain_model).save_pretrained(
+                    output_dir, state_dict=_state_dict, safe_serialization=self.args.save_safetensors
+                )
+            else:
+                logger.info("Trainer.model is not a `PreTrainedModel`, only saving its state dict.")
+                torch.save(_state_dict, os.path.join(output_dir, WEIGHTS_NAME))
+        else:
+            self.model.pretrain_model.save_pretrained(
+                output_dir, state_dict=self.model.pretrain_model.state_dict(), safe_serialization=self.args.save_safetensors
+            )
+
+        _state_dict = state_dict
+        if _state_dict is None:
+            # Only save the model itself if we are using distributed training
+            model_to_save = unwrap_model(self.model)
+            _state_dict = model_to_save.state_dict()
+
+        if self.tokenizer is not None:
+            self.tokenizer.save_pretrained(output_dir)
+
+        # Good practice: save your training arguments together with the trained model
+        torch.save(self.args, os.path.join(output_dir, TRAINING_ARGS_NAME))

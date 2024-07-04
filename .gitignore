@@ -133,3 +133,9 @@ Temporary Items
 
 # PyCharm
 **/.idea/**/*
+
+
+.history
+data/
+*output
+wandb

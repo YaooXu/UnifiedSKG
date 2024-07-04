@@ -4,8 +4,12 @@
 import torch
 from torch import nn
 from transformers import AutoTokenizer
+
+from ..prompt.modeling_bart import BartForConditionalGeneration
+from ..prompt.modeling_t5 import T5ForConditionalGeneration
+
 from .base import PushToHubFriendlyModel
-from ..prompt.modeling_auto import AutoModelForSeq2SeqLM
+# from ..prompt.modeling_auto import AutoModelForSeq2SeqLM
 
 
 class Model(PushToHubFriendlyModel):
@@ -22,12 +26,11 @@ class Model(PushToHubFriendlyModel):
 
         # Load tokenizer and model.
         self.tokenizer = AutoTokenizer.from_pretrained(args.bert.location, use_fast=False)
-        self.pretrain_model = AutoModelForSeq2SeqLM.from_pretrained(
+        self.pretrain_model = T5ForConditionalGeneration.from_pretrained(
             args.bert.location
         )
         self.config = self.pretrain_model.config
-        from ..prompt.modeling_bart import BartForConditionalGeneration
-        from ..prompt.modeling_t5 import T5ForConditionalGeneration
+
         if isinstance(self.pretrain_model, BartForConditionalGeneration):
             self.match_n_layer = self.config.decoder_layers
             self.match_n_head = self.config.decoder_attention_heads
@@ -109,11 +112,14 @@ class Model(PushToHubFriendlyModel):
             for param in self.control_trans_enc.parameters():
                 param.requires_grad = False
 
-    def get_prompt(self, bsz=None, sample_size=1, description=None, knowledge=None):
+    def get_prompt(self, bsz=None, input_tokens=None, sample_size=1, description=None, knowledge=None):
         old_bsz = bsz
         bsz = bsz * sample_size
-        input_tokens = self.input_tokens.unsqueeze(0).expand(bsz, -1)
-        temp_control = self.wte(input_tokens)
+        if input_tokens is None:
+            input_tokens = self.input_tokens.unsqueeze(0).expand(bsz, -1)
+            temp_control = self.wte(input_tokens)
+        else:
+            temp_control = input_tokens
         if description is not None:
             temp_control = temp_control + description.repeat_interleave(sample_size, dim=0).unsqueeze(1)
         past_key_values = self.control_trans(temp_control)  # bsz, seqlen, layer*emb
@@ -128,7 +134,10 @@ class Model(PushToHubFriendlyModel):
         past_key_values = past_key_values.permute([2, 0, 3, 1, 4]).split(2)
 
         # Cross prefix
-        temp_control_dec = self.wte_dec(input_tokens)
+        if input_tokens is None:
+            temp_control_dec = self.wte_dec(input_tokens)
+        else:
+            temp_control_dec = input_tokens
         if description is not None:
             temp_control_dec = temp_control_dec + description.repeat_interleave(sample_size, dim=0).unsqueeze(1)
         past_key_values_dec = self.control_trans_dec(
@@ -145,10 +154,13 @@ class Model(PushToHubFriendlyModel):
         past_key_values_dec = past_key_values_dec.permute([2, 0, 3, 1, 4]).split(2)
 
         # Encoder prefix
-        input_tokens_enc = (
-            self.input_tokens.unsqueeze(0).expand(old_bsz, -1)
-        )
-        temp_control_enc = self.wte_enc(input_tokens_enc)
+        if input_tokens is None:
+            input_tokens_enc = (
+                self.input_tokens.unsqueeze(0).expand(old_bsz, -1)
+            )
+            temp_control_enc = self.wte_enc(input_tokens_enc)
+        else:
+            temp_control_enc = input_tokens
         if description is not None:
             temp_control_enc = temp_control_enc + description.unsqueeze(1)
         past_key_values_enc = self.control_trans_enc(
@@ -263,15 +275,23 @@ class Model(PushToHubFriendlyModel):
 
         past_prompt = self.get_prompt(
             bsz=bsz, description=description_representation, knowledge=knowledge_representation,
+            input_tokens=kwargs['input_tokens']
         )
 
-        loss = self.pretrain_model(
+        encoder_outputs = self.pretrain_model.encoder(
             input_ids=input_ids,
             attention_mask=attention_mask,
-            labels=labels,
             past_prompt=past_prompt,
-        ).loss
-        return {'loss': loss}
+        )
+        return encoder_outputs
+    
+        # loss = self.pretrain_model(
+        #     input_ids=input_ids,
+        #     attention_mask=attention_mask,
+        #     labels=labels,
+        #     past_prompt=past_prompt,
+        # ).loss
+        # return {'loss': loss}
 
     def generate(self,
                  input_ids,

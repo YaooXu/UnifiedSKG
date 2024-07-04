@@ -14,7 +14,7 @@ from transformers.trainer_utils import get_last_checkpoint
 from collections import OrderedDict
 import utils.tool
 from utils.configue import Configure
-from utils.dataset import TokenizedDataset
+from utils.dataset import TokenizedDataset, UniSKGDataCollator
 from utils.trainer import EvaluateFriendlySeq2SeqTrainer
 from utils.training_arguments import WrappedSeq2SeqTrainingArguments
 
@@ -26,15 +26,17 @@ logger = logging.getLogger(__name__)
 def main() -> None:
     os.environ[
         'CUBLAS_WORKSPACE_CONFIG'] = ':4096:8'  # Deterministic behavior of torch.addmm. Please refer to https://docs.nvidia.com/cuda/cublas/index.html#cublasApi_reproducibility
-    torch.set_deterministic(True)
+    os.environ['TMPDIR'] = '/data/yaoxu/tmp'
+    
+    # torch.set_deterministic(True)
     # Initialize the logger
     logging.basicConfig(level=logging.INFO)
 
     from filelock import FileLock
-    import nltk
-    with FileLock(".lock") as lock:
-        nltk.download("punkt", quiet=True)
-        nltk.download("stopwords", quiet=True)
+    # import nltk
+    # with FileLock(".lock") as lock:
+    #     nltk.download("punkt", quiet=False)
+    #     nltk.download("stopwords", quiet=False)
 
     # Get args
     parser = HfArgumentParser((WrappedSeq2SeqTrainingArguments,))
@@ -51,15 +53,15 @@ def main() -> None:
         import wandb
 
         init_args = {}
-        if "MLFLOW_EXPERIMENT_ID" in os.environ:
-            init_args["group"] = os.environ["MLFLOW_EXPERIMENT_ID"]
+        # if "MLFLOW_EXPERIMENT_ID" in os.environ:
+        #     init_args["group"] = os.environ["MLFLOW_EXPERIMENT_ID"]
         wandb.init(
             project=os.getenv("WANDB_PROJECT", "uni-frame-for-knowledge-tabular-tasks"),
             name=training_args.run_name,
-            entity=os.getenv("WANDB_ENTITY", 'sgtnew'),
+            # entity=os.getenv("WANDB_ENTITY", 'sgtnew'),
             **init_args,
         )
-        wandb.config.update(training_args, allow_val_change=True)
+        # wandb.config.update(training_args, allow_val_change=True)
 
     # Detect last checkpoint
     last_checkpoint = None
@@ -83,14 +85,14 @@ def main() -> None:
     # We deprecate the k-fold cross-valid function since it causes too many avoidable troubles.
 
     if not args.arg_paths:
-        cache_root = os.path.join('output', 'cache')
+        cache_root = os.path.join('graph_output', 'cache')
         os.makedirs(cache_root, exist_ok=True)
         raw_datasets_split: datasets.DatasetDict = datasets.load_dataset(path=args.dataset.loader_path,
                                                                          cache_dir=args.dataset.data_store_path)
         seq2seq_dataset_split: tuple = utils.tool.get_constructor(args.seq2seq.constructor)(args).to_seq2seq(
             raw_datasets_split, cache_root)
     else:
-        cache_root = os.path.join('output', 'cache')
+        cache_root = os.path.join('graph_output', 'cache')
         os.makedirs(cache_root, exist_ok=True)
         meta_tuning_data = {}
         for task, arg_path in args.arg_paths:
@@ -128,6 +130,10 @@ def main() -> None:
     test_dataset = TokenizedDataset(args, training_args, model_tokenizer,
                                     seq2seq_test_dataset) if seq2seq_test_dataset else None
 
+    if 'debug' in training_args.output_dir:
+        eval_dataset = eval_dataset.select(range(8))
+        test_dataset = test_dataset.select(range(8))
+
     # Initialize our Trainer
     early_stopping_callback = EarlyStoppingCallback(early_stopping_patience=args.seq2seq.patience if args.seq2seq.patience else 5)
     trainer = EvaluateFriendlySeq2SeqTrainer(
@@ -138,6 +144,7 @@ def main() -> None:
         # they are all f(predictions: List, references: List of dict) = eval_result: dict
         tokenizer=model_tokenizer,
         train_dataset=train_dataset,
+        # data_collator=UniSKGDataCollator(model_tokenizer),
         eval_dataset=eval_dataset,
         eval_examples=seq2seq_eval_dataset,
         wandb_run_dir=wandb.run.dir if "wandb" in training_args.report_to and training_args.local_rank <= 0 else None,
@@ -178,7 +185,7 @@ def main() -> None:
             checkpoint = training_args.resume_from_checkpoint
         elif last_checkpoint is not None:
             checkpoint = last_checkpoint
-
+        logger.info(f"{checkpoint}")
         train_result = trainer.train(resume_from_checkpoint=checkpoint)
         trainer.save_model()  # Saves the tokenizer too for easy upload
 

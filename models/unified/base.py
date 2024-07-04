@@ -6,7 +6,7 @@ from transformers.modeling_utils import (
     ModuleUtilsMixin, PushToHubMixin,
     logging, Union, Optional, Callable, unwrap_model, get_parameter_dtype,
     FLAX_WEIGHTS_NAME, TF2_WEIGHTS_NAME, TF_WEIGHTS_NAME, WEIGHTS_NAME,
-    is_offline_mode, is_remote_url, hf_bucket_url, cached_path
+    is_offline_mode, is_remote_url, cached_file
 )
 
 logger = logging.get_logger(__name__)
@@ -179,17 +179,18 @@ class PushToHubFriendlyModel(nn.Module, ModuleUtilsMixin, PushToHubMixin):
                 else:
                     filename = WEIGHTS_NAME
 
-                archive_file = hf_bucket_url(
-                    pretrained_model_name_or_path,
-                    filename=filename,
-                    revision=revision,
-                    mirror=mirror,
-                )
+                # archive_file = hf_bucket_url(
+                #     pretrained_model_name_or_path,
+                #     filename=filename,
+                #     revision=revision,
+                #     mirror=mirror,
+                # )
 
             try:
                 # Load from URL or cache if already cached
-                resolved_archive_file = cached_path(
-                    archive_file,
+                resolved_archive_file = cached_file(
+                    pretrained_model_name_or_path,
+                    "pytorch_model.bin",
                     cache_dir=cache_dir,
                     force_download=force_download,
                     proxies=proxies,
@@ -207,10 +208,10 @@ class PushToHubFriendlyModel(nn.Module, ModuleUtilsMixin, PushToHubMixin):
                 )
                 raise EnvironmentError(msg)
 
-            if resolved_archive_file == archive_file:
-                logger.info(f"loading weights file {archive_file}")
-            else:
-                logger.info(f"loading weights file {archive_file} from cache at {resolved_archive_file}")
+            # if resolved_archive_file == archive_file:
+            #     logger.info(f"loading weights file {archive_file}")
+            # else:
+            #     logger.info(f"loading weights file {archive_file} from cache at {resolved_archive_file}")
         else:
             resolved_archive_file = None
 

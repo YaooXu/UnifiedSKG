@@ -8,7 +8,8 @@ from .table_truncate import TableTruncate
 
 class TableProcessor(object):
 
-    def __init__(self, table_linearize_func: TableLinearize,
+    def __init__(self, 
+                 table_linearize_func: TableLinearize,
                  table_truncate_funcs: List[TableTruncate],
                  target_delimiter: str = ", "):
         self.table_linearize_func = table_linearize_func
