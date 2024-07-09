@@ -293,16 +293,14 @@ class EvaluateFriendlySeq2SeqTrainer(transformers.trainer_seq2seq.Seq2SeqTrainer
             gen_kwargs["task_ids"] = inputs["task_ids"]
 
         generated_tokens = self.model.generate(
-            inputs["input_ids"],
-            attention_mask=inputs["attention_mask"],
-            **gen_kwargs,
+            **{**inputs, **gen_kwargs},
         )
         # in case the batch is shorter than max length, the output should be padded
         if generated_tokens.shape[-1] < gen_kwargs["max_length"]:
             generated_tokens = self._pad_tensors_to_max_len(generated_tokens, gen_kwargs["max_length"])
 
         with torch.no_grad():
-            if self.use_amp:
+            if self.use_apex:
                 with autocast():
                     outputs = model(**inputs)
             else:
@@ -335,7 +333,8 @@ class EvaluateFriendlySeq2SeqTrainer(transformers.trainer_seq2seq.Seq2SeqTrainer
         if self.args.local_rank <= 0:
             with open(f"{self.args.output_dir}/predictions_{stage}.json", "w") as f:
                 json.dump(
-                    [dict(**{"prediction": predictions[idx]}, **examples[idx]) for idx in range(len(predictions))],
+                    [dict(**{"prediction": predictions[idx]}, **{k:v for k,v in examples[idx].items() if k != 'graph'}) 
+                        for idx in range(len(predictions))],
                     f,
                     indent=4,
                 )
@@ -344,7 +343,8 @@ class EvaluateFriendlySeq2SeqTrainer(transformers.trainer_seq2seq.Seq2SeqTrainer
         if self.wandb_run_dir and self.args.local_rank <= 0:
             with open(f"{self.wandb_run_dir}/predictions_{stage}.json", "w") as f:
                 json.dump(
-                    [dict(**{"prediction": predictions[idx]}, **examples[idx]) for idx in range(len(predictions))],
+                    [dict(**{"prediction": predictions[idx]}, **{k:v for k,v in examples[idx].items() if k != 'graph'}) 
+                        for idx in range(len(predictions))],
                     f,
                     indent=4,
                 )

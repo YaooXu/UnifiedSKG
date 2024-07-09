@@ -43,3 +43,6 @@ class WrappedSeq2SeqTrainingArguments(Seq2SeqTrainingArguments):
         default=None, metadata={
             "help": "The directory to load the model weights from."}
     )
+
+    remove_unused_columns: int = field(default=False)
+    save_safetensors: int = field(default=False)

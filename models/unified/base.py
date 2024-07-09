@@ -6,7 +6,7 @@ from transformers.modeling_utils import (
     ModuleUtilsMixin, PushToHubMixin,
     logging, Union, Optional, Callable, unwrap_model, get_parameter_dtype,
     FLAX_WEIGHTS_NAME, TF2_WEIGHTS_NAME, TF_WEIGHTS_NAME, WEIGHTS_NAME,
-    is_offline_mode, is_remote_url, hf_bucket_url, cached_path
+    is_offline_mode, is_remote_url, #hf_bucket_url, cached_path
 )
 
 logger = logging.get_logger(__name__)
