@@ -222,7 +222,7 @@ class IndexedRowTableLinearize(TableLinearize):
         return " ".join(row)
 
         
-    def get_position_bias_and_attn_mask(self, linear_table):
+    def get_edge_index(self, linear_table):
         tokenized_question_and_table = self.tokenizer(
             linear_table.lower(), 
             # padding="max_length",

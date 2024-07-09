@@ -35,7 +35,11 @@ from transformers.modeling_outputs import (
     Seq2SeqSequenceClassifierOutput,
 )
 from transformers.modeling_utils import PreTrainedModel
-from transformers.pytorch_utils import ALL_LAYERNORM_LAYERS, find_pruneable_heads_and_indices, prune_linear_layer
+from transformers.pytorch_utils import (
+    ALL_LAYERNORM_LAYERS,
+    find_pruneable_heads_and_indices,
+    prune_linear_layer,
+)
 from transformers.utils import (
     DUMMY_INPUTS,
     DUMMY_MASK,
@@ -102,7 +106,14 @@ def load_tf_weights_in_t5(model, config, tf_checkpoint_path):
         # adam_v and adam_m are variables used in AdamWeightDecayOptimizer to calculated m and v
         # which are not required for using pretrained model
         if any(
-            n in ["adam_v", "adam_m", "AdamWeightDecayOptimizer", "AdamWeightDecayOptimizer_1", "global_step"]
+            n
+            in [
+                "adam_v",
+                "adam_m",
+                "AdamWeightDecayOptimizer",
+                "AdamWeightDecayOptimizer_1",
+                "global_step",
+            ]
             for n in name
         ):
             logger.info(f"Skipping {'/'.join(name)}")
@@ -366,10 +377,10 @@ class T5Attention(nn.Module):
 
         # TODO: Xu
         self.offset = 128
-        self.encoder_position_bias = nn.Embedding(256, self.n_heads) 
+        self.encoder_position_bias = nn.Embedding(256, self.n_heads)
         # initialize is important
         self.encoder_position_bias.weight.data.zero_()
-        
+
         if self.has_relative_attention_bias:
             self.relative_attention_bias = nn.Embedding(self.relative_attention_num_buckets, self.n_heads)
         self.pruned_heads = set()
@@ -378,9 +389,7 @@ class T5Attention(nn.Module):
     def prune_heads(self, heads):
         if len(heads) == 0:
             return
-        heads, index = find_pruneable_heads_and_indices(
-            heads, self.n_heads, self.key_value_proj_dim, self.pruned_heads
-        )
+        heads, index = find_pruneable_heads_and_indices(heads, self.n_heads, self.key_value_proj_dim, self.pruned_heads)
         # Prune linear layers
         self.q = prune_linear_layer(self.q, index)
         self.k = prune_linear_layer(self.k, index)
@@ -428,9 +437,7 @@ class T5Attention(nn.Module):
 
         # The other half of the buckets are for logarithmically bigger bins in positions up to max_distance
         relative_position_if_large = max_exact + (
-            torch.log(relative_position.float() / max_exact)
-            / math.log(max_distance / max_exact)
-            * (num_buckets - max_exact)
+            torch.log(relative_position.float() / max_exact) / math.log(max_distance / max_exact) * (num_buckets - max_exact)
         ).to(torch.long)
         relative_position_if_large = torch.min(
             relative_position_if_large, torch.full_like(relative_position_if_large, num_buckets - 1)
@@ -527,10 +534,16 @@ class T5Attention(nn.Module):
 
         # get key/value states
         key_states = project(
-            hidden_states, self.k, key_value_states, past_key_value[0] if past_key_value is not None else None
+            hidden_states,
+            self.k,
+            key_value_states,
+            past_key_value[0] if past_key_value is not None else None,
         )
         value_states = project(
-            hidden_states, self.v, key_value_states, past_key_value[1] if past_key_value is not None else None
+            hidden_states,
+            self.v,
+            key_value_states,
+            past_key_value[1] if past_key_value is not None else None,
         )
 
         # compute scores
@@ -541,7 +554,9 @@ class T5Attention(nn.Module):
         if position_bias is None:
             if not self.has_relative_attention_bias:
                 position_bias = torch.zeros(
-                    (1, self.n_heads, real_seq_length, key_length), device=scores.device, dtype=scores.dtype
+                    (1, self.n_heads, real_seq_length, key_length),
+                    device=scores.device,
+                    dtype=scores.dtype,
                 )
                 if self.gradient_checkpointing and self.training:
                     position_bias.requires_grad = True
@@ -565,9 +580,11 @@ class T5Attention(nn.Module):
                 num_buckets=self.relative_attention_num_buckets,
                 max_distance=self.relative_attention_max_distance,
             )
-            values = self.relative_attention_bias(relative_position_bucket)  # shape (batch_size, query_length, key_length, num_heads)
-            position_bias = values.permute([0, 3, 1, 2]) + mask # shape (batch_size, num_heads, query_length, key_length)
-            
+            values = self.relative_attention_bias(
+                relative_position_bucket
+            )  # shape (batch_size, query_length, key_length, num_heads)
+            position_bias = values.permute([0, 3, 1, 2]) + mask  # shape (batch_size, num_heads, query_length, key_length)
+
         if self.pruned_heads:
             mask = torch.ones(position_bias.shape[1])
             mask[list(self.pruned_heads)] = 0
@@ -1002,8 +1019,8 @@ class T5Stack(T5PreTrainedModel):
         output_attentions=None,
         output_hidden_states=None,
         return_dict=None,
-        labels=None, # TODO: Xu
-        encoder_position_bias=None, # TODO: Xu
+        labels=None,  # TODO: Xu
+        encoder_position_bias=None,  # TODO: Xu
     ):
         # Model parallel
         if self.model_parallel:
@@ -1011,9 +1028,7 @@ class T5Stack(T5PreTrainedModel):
             self.embed_tokens = self.embed_tokens.to(self.first_device)
         use_cache = use_cache if use_cache is not None else self.config.use_cache
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
-        output_hidden_states = (
-            output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
-        )
+        output_hidden_states = output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
         if input_ids is not None and inputs_embeds is not None:
@@ -1061,9 +1076,7 @@ class T5Stack(T5PreTrainedModel):
             encoder_batch_size, encoder_sequence_length, _ = encoder_hidden_states.size()
             encoder_hidden_shape = (encoder_batch_size, encoder_sequence_length)
             if encoder_attention_mask is None:
-                encoder_attention_mask = torch.ones(
-                    encoder_hidden_shape, device=inputs_embeds.device, dtype=torch.long
-                )
+                encoder_attention_mask = torch.ones(encoder_hidden_shape, device=inputs_embeds.device, dtype=torch.long)
             encoder_extended_attention_mask = self.invert_attention_mask(encoder_attention_mask)
         else:
             encoder_extended_attention_mask = None
@@ -1083,7 +1096,7 @@ class T5Stack(T5PreTrainedModel):
         all_attentions = () if output_attentions else None
         all_cross_attentions = () if (output_attentions and self.is_decoder) else None
         # position_bias = None
-        position_bias = encoder_position_bias # TODO: Xu
+        position_bias = encoder_position_bias  # TODO: Xu
         encoder_decoder_position_bias = None
 
         hidden_states = self.dropout(inputs_embeds)
@@ -1401,9 +1414,7 @@ class T5Model(T5PreTrainedModel):
             FutureWarning,
         )
         self.device_map = (
-            get_device_map(len(self.encoder.block), range(torch.cuda.device_count()))
-            if device_map is None
-            else device_map
+            get_device_map(len(self.encoder.block), range(torch.cuda.device_count())) if device_map is None else device_map
         )
         assert_device_map(self.device_map, len(self.encoder.block))
         self.encoder.parallelize(self.device_map)
@@ -1571,7 +1582,11 @@ class T5ForConditionalGeneration(T5PreTrainedModel):
     _keys_to_ignore_on_load_unexpected = [
         "decoder.block.0.layer.1.EncDecAttention.relative_attention_bias.weight",
     ]
-    _tied_weights_keys = ["encoder.embed_tokens.weight", "decoder.embed_tokens.weight", "lm_head.weight"]
+    _tied_weights_keys = [
+        "encoder.embed_tokens.weight",
+        "decoder.embed_tokens.weight",
+        "lm_head.weight",
+    ]
 
     def __init__(self, config: T5Config):
         super().__init__(config)
@@ -1610,9 +1625,7 @@ class T5ForConditionalGeneration(T5PreTrainedModel):
             FutureWarning,
         )
         self.device_map = (
-            get_device_map(len(self.encoder.block), range(torch.cuda.device_count()))
-            if device_map is None
-            else device_map
+            get_device_map(len(self.encoder.block), range(torch.cuda.device_count())) if device_map is None else device_map
         )
         assert_device_map(self.device_map, len(self.encoder.block))
         self.encoder.parallelize(self.device_map)
@@ -1680,7 +1693,7 @@ class T5ForConditionalGeneration(T5PreTrainedModel):
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
-        encoder_position_bias=None, # TODO: Xu
+        encoder_position_bias=None,  # TODO: Xu
     ) -> Union[Tuple[torch.FloatTensor], Seq2SeqLMOutput]:
         r"""
         labels (`torch.LongTensor` of shape `(batch_size,)`, *optional*):
@@ -1733,9 +1746,9 @@ class T5ForConditionalGeneration(T5PreTrainedModel):
                 output_attentions=output_attentions,
                 output_hidden_states=output_hidden_states,
                 return_dict=return_dict,
-                encoder_position_bias=encoder_position_bias # TODO: Xu
+                encoder_position_bias=encoder_position_bias,  # TODO: Xu
             )
-            
+
         elif return_dict and not isinstance(encoder_outputs, BaseModelOutput):
             encoder_outputs = BaseModelOutput(
                 last_hidden_state=encoder_outputs[0],
@@ -1928,9 +1941,7 @@ class T5EncoderModel(T5PreTrainedModel):
             FutureWarning,
         )
         self.device_map = (
-            get_device_map(len(self.encoder.block), range(torch.cuda.device_count()))
-            if device_map is None
-            else device_map
+            get_device_map(len(self.encoder.block), range(torch.cuda.device_count())) if device_map is None else device_map
         )
         assert_device_map(self.device_map, len(self.encoder.block))
         self.encoder.parallelize(self.device_map)
@@ -2065,9 +2076,7 @@ class T5ForSequenceClassification(T5PreTrainedModel):
             use_cache = False
 
         if input_ids is None and inputs_embeds is not None:
-            raise NotImplementedError(
-                f"Passing input embeddings is currently not supported for {self.__class__.__name__}"
-            )
+            raise NotImplementedError(f"Passing input embeddings is currently not supported for {self.__class__.__name__}")
 
         # Copied from models.bart.modeling_bart.BartModel.forward different to other models, T5 automatically creates
         # decoder_input_ids from input_ids if no decoder_input_ids are provided

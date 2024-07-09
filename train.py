@@ -24,8 +24,9 @@ logger = logging.getLogger(__name__)
 
 
 def main() -> None:
-    os.environ[
-        'CUBLAS_WORKSPACE_CONFIG'] = ':4096:8'  # Deterministic behavior of torch.addmm. Please refer to https://docs.nvidia.com/cuda/cublas/index.html#cublasApi_reproducibility
+    os.environ["CUBLAS_WORKSPACE_CONFIG"] = (
+        ":4096:8"  # Deterministic behavior of torch.addmm. Please refer to https://docs.nvidia.com/cuda/cublas/index.html#cublasApi_reproducibility
+    )
     # torch.set_deterministic(True)
     # Initialize the logger
     logging.basicConfig(level=logging.INFO)
@@ -38,13 +39,12 @@ def main() -> None:
 
     # Get args
     parser = HfArgumentParser((WrappedSeq2SeqTrainingArguments,))
-    training_args, = parser.parse_args_into_dataclasses()
+    (training_args,) = parser.parse_args_into_dataclasses()
     set_seed(training_args.seed)
     args = Configure.Get(training_args.cfg)
 
-    if 'checkpoint-???' in args.bert.location:
-        args.bert.location = get_last_checkpoint(
-            os.path.dirname(args.bert.location.model_name_or_path))
+    if "checkpoint-???" in args.bert.location:
+        args.bert.location = get_last_checkpoint(os.path.dirname(args.bert.location.model_name_or_path))
         logger.info(f"Resolve model_name_or_path to {args.bert.location.model_name_or_path}")
 
     if "wandb" in training_args.report_to and training_args.local_rank <= 0:
@@ -63,8 +63,7 @@ def main() -> None:
 
     # Detect last checkpoint
     last_checkpoint = None
-    if os.path.isdir(
-            training_args.output_dir) and training_args.do_train and not training_args.overwrite_output_dir:
+    if os.path.isdir(training_args.output_dir) and training_args.do_train and not training_args.overwrite_output_dir:
         last_checkpoint = get_last_checkpoint(training_args.output_dir)
         if last_checkpoint is None and len(os.listdir(training_args.output_dir)) > 0:
             raise ValueError(
@@ -83,30 +82,32 @@ def main() -> None:
     # We deprecate the k-fold cross-valid function since it causes too many avoidable troubles.
 
     if not args.arg_paths:
-        cache_root = os.path.join('output_graph', 'cache')
+        cache_root = os.path.join("output_graph", "cache")
         os.makedirs(cache_root, exist_ok=True)
-        raw_datasets_split: datasets.DatasetDict = datasets.load_dataset(path=args.dataset.loader_path,
-                                                                         cache_dir=args.dataset.data_store_path)
+        raw_datasets_split: datasets.DatasetDict = datasets.load_dataset(
+            path=args.dataset.loader_path, cache_dir=args.dataset.data_store_path
+        )
         seq2seq_dataset_split: tuple = utils.tool.get_constructor(args.seq2seq.constructor)(args).to_seq2seq(
-            raw_datasets_split, cache_root)
+            raw_datasets_split, cache_root
+        )
     else:
-        cache_root = os.path.join('output_graph', 'cache')
+        cache_root = os.path.join("output_graph", "cache")
         os.makedirs(cache_root, exist_ok=True)
         meta_tuning_data = {}
         for task, arg_path in args.arg_paths:
             task_args = Configure.Get(arg_path)
             task_args.bert = args.bert
-            print('task_args.bert.location:', task_args.bert.location)
+            print("task_args.bert.location:", task_args.bert.location)
             task_raw_datasets_split: datasets.DatasetDict = datasets.load_dataset(
-                path=task_args.dataset.loader_path,
-                cache_dir=task_args.dataset.data_store_path)
-            task_seq2seq_dataset_split: tuple = utils.tool.get_constructor(task_args.seq2seq.constructor)(task_args).\
-                to_seq2seq(task_raw_datasets_split, cache_root)
+                path=task_args.dataset.loader_path, cache_dir=task_args.dataset.data_store_path
+            )
+            task_seq2seq_dataset_split: tuple = utils.tool.get_constructor(task_args.seq2seq.constructor)(task_args).to_seq2seq(
+                task_raw_datasets_split, cache_root
+            )
 
             meta_tuning_data[arg_path] = task_seq2seq_dataset_split
 
-        seq2seq_dataset_split: tuple = utils.tool.get_constructor(args.seq2seq.constructor)(args).\
-            to_seq2seq(meta_tuning_data)
+        seq2seq_dataset_split: tuple = utils.tool.get_constructor(args.seq2seq.constructor)(args).to_seq2seq(meta_tuning_data)
 
     evaluator = utils.tool.get_evaluator(args.evaluate.tool)(args)
     model = utils.tool.get_model(args.model.name)(args)
@@ -121,15 +122,20 @@ def main() -> None:
         raise ValueError("Other split not support yet.")
 
     # We wrap the "string" seq2seq data into "tokenized tensor".
-    train_dataset = TokenizedDataset(args, training_args, model_tokenizer,
-                                     seq2seq_train_dataset) if seq2seq_train_dataset else None
-    eval_dataset = TokenizedDataset(args, training_args, model_tokenizer,
-                                    seq2seq_eval_dataset) if seq2seq_eval_dataset else None
-    test_dataset = TokenizedDataset(args, training_args, model_tokenizer,
-                                    seq2seq_test_dataset) if seq2seq_test_dataset else None
+    train_dataset = (
+        TokenizedDataset(args, training_args, model_tokenizer, seq2seq_train_dataset) if seq2seq_train_dataset else None
+    )
+    eval_dataset = (
+        TokenizedDataset(args, training_args, model_tokenizer, seq2seq_eval_dataset) if seq2seq_eval_dataset else None
+    )
+    test_dataset = (
+        TokenizedDataset(args, training_args, model_tokenizer, seq2seq_test_dataset) if seq2seq_test_dataset else None
+    )
 
     # Initialize our Trainer
-    early_stopping_callback = EarlyStoppingCallback(early_stopping_patience=args.seq2seq.patience if args.seq2seq.patience else 5)
+    early_stopping_callback = EarlyStoppingCallback(
+        early_stopping_patience=args.seq2seq.patience if args.seq2seq.patience else 5
+    )
     trainer = EvaluateFriendlySeq2SeqTrainer(
         args=training_args,
         model=model,
@@ -144,7 +150,7 @@ def main() -> None:
         wandb_run_dir=wandb.run.dir if "wandb" in training_args.report_to and training_args.local_rank <= 0 else None,
         callbacks=[early_stopping_callback],
     )
-    print('Trainer build successfully.')
+    print("Trainer build successfully.")
 
     # Load model weights (for --do_train=False or post finetuning).
     if training_args.load_weights_from:
@@ -163,7 +169,9 @@ def main() -> None:
             for weight_name, stored_tensor in state_dict.items():
                 if str(weight_name).startswith("pretrain_model"):
                     continue  # skip the pretrained model and we will load a new one from another place
-                reconstruct_state_dict['{}.{}.{}'.format(MULTI_PREFIX_ATTR_NAME, "_".join(task_name.split("_")[:-1]), weight_name)] = stored_tensor
+                reconstruct_state_dict[
+                    "{}.{}.{}".format(MULTI_PREFIX_ATTR_NAME, "_".join(task_name.split("_")[:-1]), weight_name)
+                ] = stored_tensor
                 # extract the prefix part and add them to dict
 
         # give it into the model
@@ -195,9 +203,7 @@ def main() -> None:
     if training_args.do_eval:
         logger.info("*** Evaluate ***")
 
-        metrics = trainer.evaluate(
-            metric_key_prefix="eval"
-        )
+        metrics = trainer.evaluate(metric_key_prefix="eval")
         max_eval_samples = len(eval_dataset)
         metrics["eval_samples"] = min(max_eval_samples, len(eval_dataset))
 
@@ -210,7 +216,7 @@ def main() -> None:
         predict_results = trainer.predict(
             test_dataset=test_dataset if test_dataset else eval_dataset,
             test_examples=seq2seq_test_dataset if seq2seq_test_dataset else seq2seq_eval_dataset,
-            metric_key_prefix="predict"
+            metric_key_prefix="predict",
         )
         metrics = predict_results.metrics
         max_predict_samples = len(test_dataset)

@@ -7,6 +7,7 @@ import numpy as np
 import transformers
 import torch.nn.functional as F
 
+
 def generate_dist_matrix(rows, cols):
     # generate
     # [[2, 3, 4],
@@ -15,6 +16,7 @@ def generate_dist_matrix(rows, cols):
     result = np.tile(base, (rows, 1))  # 将base数组扩展成rows行的矩阵
     result += np.arange(rows, 0, -1).reshape(rows, 1)  # 加上行索引的偏移量
     return result
+
 
 def generate_upper_tri_dist_matrix(rows, cols):
     # generate
@@ -25,56 +27,66 @@ def generate_upper_tri_dist_matrix(rows, cols):
     matrix = matrix.cumsum(-1)
     return matrix
 
+
 def generate_symmetric_matrix(matrix, rows, cols, sign=1):
     # 获取上三角部分的索引，不包括对角线
     upper_indices = np.triu_indices(rows, 1, cols)
-    
+
     values = matrix[upper_indices]
-    
+
     # 将下三角部分设置为上三角部分
     lower_indices = (upper_indices[1], upper_indices[0])
     matrix[lower_indices] = sign * values
-    
+
     return matrix
 
 
 def get_position_bias_and_attn_mask(input_ids, attention_mask, tokenizer, edge_index):
     node_tokens = ["[node]"]
     node_id = tokenizer.convert_tokens_to_ids(node_tokens)[0]
-    
+
     node_idxes = np.where(np.array(input_ids) == node_id)[0].tolist()
-    node_idxes.append(sum(attention_mask)) # real length
+    node_idxes.append(sum(attention_mask))  # real length
 
     cell_ranges = []
     for i in range(len(node_idxes) - 1):
         cell_ranges.append((node_idxes[i], node_idxes[i + 1]))
-    
+
     length = len(input_ids)
     # -1024 means not adjoint
     encoder_position_bias = np.zeros((length, length), dtype=np.int16)
     encoder_position_bias.fill(-1024)
-    
+
     for st, ed in cell_ranges:
-        encoder_position_bias[st:ed, st:ed] = generate_upper_tri_dist_matrix(ed-st,ed-st)
+        encoder_position_bias[st:ed, st:ed] = generate_upper_tri_dist_matrix(ed - st, ed - st)
 
     for cell1, cell2 in edge_index:
         if cell1 >= len(cell_ranges) or cell2 >= len(cell_ranges):
             continue
         range1 = cell_ranges[cell1]
         range2 = cell_ranges[cell2]
-        encoder_position_bias[range1[0]:range1[1], range2[0]:range2[1]] = generate_dist_matrix(range1[1]-range1[0], range2[1]-range2[0])
-    
+        encoder_position_bias[range1[0] : range1[1], range2[0] : range2[1]] = generate_dist_matrix(
+            range1[1] - range1[0], range2[1] - range2[0]
+        )
+
     question_ed = cell_ranges[0][0]
-    
-    encoder_position_bias[:question_ed] = generate_upper_tri_dist_matrix(question_ed,length)
+
+    encoder_position_bias[:question_ed] = generate_upper_tri_dist_matrix(question_ed, length)
     encoder_position_bias = generate_symmetric_matrix(encoder_position_bias, length, length, sign=-1)
     encoder_position_bias[encoder_position_bias == 1024] = -1024
-    
+
     return encoder_position_bias
+
 
 class TokenizedDataset(Dataset):
     # TODO: A unified structure-representation.
-    def __init__(self, args, training_args, tokenizer, seq2seq_dataset, ):
+    def __init__(
+        self,
+        args,
+        training_args,
+        tokenizer,
+        seq2seq_dataset,
+    ):
         self.args = args
         self.training_args = training_args
         self.tokenizer = tokenizer
@@ -96,25 +108,26 @@ class TokenizedDataset(Dataset):
                 # TODO (commented by Chen): the context part roughly follows the implementation of CoSQL by Tianbao.
                 # text_in = "[utt n] || [utt n-1] | [utt n-2] | ..."
                 index = raw_item["text_in"].index(self.conv_sep)
-                if self.args.model.knowledge_usage == 'concatenate' or self.args.model.knowledge_usage is None:
+                if self.args.model.knowledge_usage == "concatenate" or self.args.model.knowledge_usage is None:
                     # seq_in  = "[utt n] ; structured knowledge: struct_in ; context: [utt n-1] | [utt n-2] | ..."
-                    seq_in = "{} ; structured knowledge: {} ; context: {}".format(raw_item["text_in"][:index],
-                                                                                  raw_item["struct_in"],
-                                                                                  raw_item["text_in"][index + len(self.conv_sep):])
-                elif self.args.model.knowledge_usage == 'separate':
+                    seq_in = "{} ; structured knowledge: {} ; context: {}".format(
+                        raw_item["text_in"][:index], raw_item["struct_in"], raw_item["text_in"][index + len(self.conv_sep) :]
+                    )
+                elif self.args.model.knowledge_usage == "separate":
                     # seq_in  = "[utt n] ; context: [utt n-1] | [utt n-2] | ..."
-                    seq_in = "{} ; context: {}".format(raw_item["text_in"][:index],
-                                                       raw_item["text_in"][index + len(self.conv_sep):])
+                    seq_in = "{} ; context: {}".format(
+                        raw_item["text_in"][:index], raw_item["text_in"][index + len(self.conv_sep) :]
+                    )
                 else:
                     raise ValueError()
             else:
                 ######################
                 # Non-conversational #
                 ######################
-                if self.args.model.knowledge_usage == 'concatenate' or self.args.model.knowledge_usage is None:
+                if self.args.model.knowledge_usage == "concatenate" or self.args.model.knowledge_usage is None:
                     # seq_in  = "text_in ; structured knowledge: struct_in"
                     seq_in = "{} ; structured knowledge: {}".format(raw_item["text_in"], raw_item["struct_in"])
-                elif self.args.model.knowledge_usage == 'separate':
+                elif self.args.model.knowledge_usage == "separate":
                     # seq_in  = "text_in"
                     seq_in = raw_item["text_in"]
                 else:
@@ -123,10 +136,10 @@ class TokenizedDataset(Dataset):
             ######################
             # Without text input #
             ######################
-            if self.args.model.knowledge_usage == 'concatenate':
+            if self.args.model.knowledge_usage == "concatenate":
                 # seq_in  = "structured knowledge: struct_in"
                 seq_in = "structured knowledge: {}".format(raw_item["struct_in"])
-            elif self.args.model.knowledge_usage == 'separate':
+            elif self.args.model.knowledge_usage == "separate":
                 # seq_in  = ""
                 seq_in = ""
             else:
@@ -159,52 +172,52 @@ class TokenizedDataset(Dataset):
         tokenized_inferred_input_ids[tokenized_inferred_input_ids == self.tokenizer.pad_token_id] = -100
 
         item = {
-            'input_ids': torch.LongTensor(tokenized_question_and_schemas.data["input_ids"]),
-            'attention_mask': torch.LongTensor(tokenized_question_and_schemas.data["attention_mask"]),
-            'labels': tokenized_inferred_input_ids,
+            "input_ids": torch.LongTensor(tokenized_question_and_schemas.data["input_ids"]),
+            "attention_mask": torch.LongTensor(tokenized_question_and_schemas.data["attention_mask"]),
+            "labels": tokenized_inferred_input_ids,
         }
         encoder_position_bias = get_position_bias_and_attn_mask(
-                item['input_ids'], 
-                item['attention_mask'],
-                self.tokenizer,
-                raw_item['graph']["edge_index"]
+            item["input_ids"], item["attention_mask"], self.tokenizer, raw_item["graph"]["edge_index"]
         )
-        item['encoder_position_bias'] = torch.LongTensor(encoder_position_bias)
+        item["encoder_position_bias"] = torch.LongTensor(encoder_position_bias)
         # item['attention_mask'] = torch.LongTensor(attention_mask)
-        
+
         # Add task name.
-        if 'task_id' in raw_item:
-            item['task_ids'] = raw_item['task_id']
+        if "task_id" in raw_item:
+            item["task_ids"] = raw_item["task_id"]
 
         # Separate description tokenization.
         if self.args.model.use_description and self.args.model.map_description:
-            tokenized_description = self.tokenizer(raw_item["description"],
-                                                   padding="max_length",
-                                                   truncation=True,
-                                                   max_length=self.args.dataset.description_max_length,
-                                                   )
-            item['description_input_ids'] = torch.LongTensor(tokenized_description.data["input_ids"])
-            item['description_attention_mask'] = torch.LongTensor(tokenized_description.data["attention_mask"])
+            tokenized_description = self.tokenizer(
+                raw_item["description"],
+                padding="max_length",
+                truncation=True,
+                max_length=self.args.dataset.description_max_length,
+            )
+            item["description_input_ids"] = torch.LongTensor(tokenized_description.data["input_ids"])
+            item["description_attention_mask"] = torch.LongTensor(tokenized_description.data["attention_mask"])
 
         # Separate knowledge tokenization.
-        if self.args.model.knowledge_usage == 'separate':
-            tokenized_knowledge = self.tokenizer(raw_item["struct_in"],
-                                                 padding="max_length",
-                                                 truncation=True,
-                                                 max_length=self.training_args.input_max_length,
-                                                 )
-            item['knowledge_input_ids'] = torch.LongTensor(tokenized_knowledge.data["input_ids"])
-            item['knowledge_attention_mask'] = torch.LongTensor(tokenized_knowledge.data["attention_mask"])
+        if self.args.model.knowledge_usage == "separate":
+            tokenized_knowledge = self.tokenizer(
+                raw_item["struct_in"],
+                padding="max_length",
+                truncation=True,
+                max_length=self.training_args.input_max_length,
+            )
+            item["knowledge_input_ids"] = torch.LongTensor(tokenized_knowledge.data["input_ids"])
+            item["knowledge_attention_mask"] = torch.LongTensor(tokenized_knowledge.data["attention_mask"])
 
         return item
 
     def __len__(self):
         return len(self.seq2seq_dataset)
 
+
 @dataclass
 class UniSKGDataCollator:
     tokenizer: transformers.PreTrainedTokenizer
-    
+
     def __call__(self, instances: Sequence[Dict]) -> Dict[str, torch.Tensor]:
         # input_ids, labels, attention_mask, encoder_position_bias = tuple(
         #     [instance[key] for instance in instances] for key in ("input_ids", "labels", "attention_mask", "encoder_position_bias")
@@ -213,23 +226,22 @@ class UniSKGDataCollator:
         input_ids, labels, encoder_position_bias = tuple(
             [instance[key] for instance in instances] for key in ("input_ids", "labels", "encoder_position_bias")
         )
-           
+
         input_ids = torch.stack(input_ids)
         labels = torch.stack(labels)
         encoder_position_bias = torch.stack(encoder_position_bias)
-             
+
         return {
-            'input_ids': input_ids,
-            'labels': labels,
-            'encoder_position_bias': encoder_position_bias,
-            'attention_mask': None
+            "input_ids": input_ids,
+            "labels": labels,
+            "encoder_position_bias": encoder_position_bias,
+            "attention_mask": None,
         }
 
     def pad_2d_mat(self, seq_length, mats):
-        
+
         attention_mask = [
-            F.pad(mat, (0, seq_length - mat.shape[0], 0, seq_length - mat.shape[1]), value=0).long()
-            for mat in mats
+            F.pad(mat, (0, seq_length - mat.shape[0], 0, seq_length - mat.shape[1]), value=0).long() for mat in mats
         ]
         attention_mask = torch.stack(attention_mask)
         return attention_mask
