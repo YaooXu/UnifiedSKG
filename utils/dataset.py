@@ -53,9 +53,9 @@ def get_position_bias_and_attn_mask(input_ids, attention_mask, tokenizer, edge_i
         cell_ranges.append((node_idxes[i], node_idxes[i + 1]))
 
     length = len(input_ids)
-    # -1024 means not adjoint
+    # -10000 means not adjoint
     encoder_position_bias = np.zeros((length, length), dtype=np.int16)
-    encoder_position_bias.fill(-1024)
+    encoder_position_bias.fill(-10000)
 
     for st, ed in cell_ranges:
         encoder_position_bias[st:ed, st:ed] = generate_upper_tri_dist_matrix(ed - st, ed - st)
@@ -73,7 +73,7 @@ def get_position_bias_and_attn_mask(input_ids, attention_mask, tokenizer, edge_i
 
     encoder_position_bias[:question_ed] = generate_upper_tri_dist_matrix(question_ed, length)
     encoder_position_bias = generate_symmetric_matrix(encoder_position_bias, length, length, sign=-1)
-    encoder_position_bias[encoder_position_bias == 1024] = -1024
+    encoder_position_bias[encoder_position_bias == 10000] = -10000
 
     return encoder_position_bias
 
@@ -150,7 +150,8 @@ class TokenizedDataset(Dataset):
             seq_in = "{} ; {}".format(raw_item["description"], seq_in)
 
         tokenized_question_and_schemas = self.tokenizer(
-            raw_item["struct_in"],
+            # raw_item["struct_in"],
+            seq_in,
             padding="max_length",
             truncation=True,
             max_length=self.training_args.input_max_length,
@@ -176,11 +177,11 @@ class TokenizedDataset(Dataset):
             "attention_mask": torch.LongTensor(tokenized_question_and_schemas.data["attention_mask"]),
             "labels": tokenized_inferred_input_ids,
         }
-        encoder_position_bias = get_position_bias_and_attn_mask(
-            item["input_ids"], item["attention_mask"], self.tokenizer, raw_item["graph"]["edge_index"]
-        )
-        item["encoder_position_bias"] = torch.LongTensor(encoder_position_bias)
-        # item['attention_mask'] = torch.LongTensor(attention_mask)
+        # encoder_position_bias = get_position_bias_and_attn_mask(
+        #     item["input_ids"], item["attention_mask"], self.tokenizer, raw_item["graph"]["edge_index"]
+        # )
+        # item["encoder_position_bias"] = torch.LongTensor(encoder_position_bias)
+        # # item['attention_mask'] = torch.LongTensor(attention_mask)
 
         # Add task name.
         if "task_id" in raw_item:

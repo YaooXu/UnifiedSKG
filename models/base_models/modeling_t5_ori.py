@@ -778,9 +778,10 @@ class T5Block(nn.Module):
                 )
                 hidden_states = torch.clamp(hidden_states, min=-clamp_value, max=clamp_value)
 
-            # Combine self attn and cross attn key value states
-            if present_key_value_state is not None:
-                present_key_value_state = present_key_value_state + cross_attention_outputs[1]
+            # TODO, Xu only remain self-attn K,V
+            # # Combine self attn and cross attn key value states
+            # if present_key_value_state is not None:
+            #     present_key_value_state = present_key_value_state + cross_attention_outputs[1]
 
             # Keep cross-attention outputs and relative position weights
             attention_outputs = attention_outputs + cross_attention_outputs[2:]
@@ -1021,6 +1022,7 @@ class T5Stack(T5PreTrainedModel):
         return_dict=None,
         labels=None,  # TODO: Xu
         encoder_position_bias=None,  # TODO: Xu
+        is_query_tokens=False, # TODO: Xu
     ):
         # Model parallel
         if self.model_parallel:
@@ -1069,6 +1071,10 @@ class T5Stack(T5PreTrainedModel):
         # We can provide a self-attention mask of dimensions [batch_size, from_seq_length, to_seq_length]
         # ourselves in which case we just need to make it broadcastable to all heads.
         extended_attention_mask = self.get_extended_attention_mask(attention_mask, input_shape)
+
+        # TODO: Xu, if is query tokens, using bi-dir attention
+        if is_query_tokens:
+            extended_attention_mask.fill_(0.0)
 
         # If a 2D or 3D attention mask is provided for the cross-attention
         # we need to make broadcastable to [batch_size, num_heads, seq_length, seq_length]
@@ -1615,6 +1621,15 @@ class T5ForConditionalGeneration(T5PreTrainedModel):
         self.model_parallel = False
         self.device_map = None
 
+        # TODO, Xu
+        self.num_query_tokens = config.num_query_tokens
+        if self.num_query_tokens > 0:
+            self.query_tokens_embeds = nn.Embedding(self.num_query_tokens, config.d_model)
+            self.query_tokens_embeds.weight.data.normal_(mean=0.0, std=config.initializer_factor * 1.0)
+            self.register_buffer("input_tokens", torch.arange(self.num_query_tokens).long())
+        else:
+            self.query_tokens_embeds = None
+
     @add_start_docstrings(PARALLELIZE_DOCSTRING)
     def parallelize(self, device_map=None):
         warnings.warn(
@@ -1726,6 +1741,10 @@ class T5ForConditionalGeneration(T5PreTrainedModel):
         >>> print(tokenizer.decode(outputs[0], skip_special_tokens=True))
         >>> # studies have shown that owning a dog is good for you.
         ```"""
+        # TODO: Xu
+        if attention_mask is None and encoder_position_bias is not None:
+            attention_mask = torch.ne(encoder_position_bias, -10000)
+
         use_cache = use_cache if use_cache is not None else self.config.use_cache
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
@@ -1776,9 +1795,35 @@ class T5ForConditionalGeneration(T5PreTrainedModel):
             if decoder_attention_mask is not None:
                 decoder_attention_mask = decoder_attention_mask.to(self.decoder.first_device)
 
-        # # TODO: Xu, from 2-d attention_mask (used in encoder) to 1-d attention_mask (used in cross-attention)
+        # TODO: Xu, from 2-d attention_mask (used in encoder) to 1-d attention_mask (used in cross-attention)
         if len(attention_mask.shape) == 3:
             attention_mask = torch.ne(attention_mask[:, :, 0], 0).int()
+
+        # TODO, Xu
+        if self.query_tokens_embeds is not None and past_key_values is None:
+            # in the training or
+            # the first generating of prediction
+            batch_size = attention_mask.shape[0]
+            query_tokens = self.input_tokens.unsqueeze(0).expand(batch_size, -1)
+            query_tokens_embeds = self.query_tokens_embeds(query_tokens)
+
+            query_attention_mask = torch.ones(
+                (batch_size, self.config.num_query_tokens), dtype=torch.long, device=query_tokens.device
+            )
+
+            query_outputs = self.decoder(
+                input_ids=None,
+                attention_mask=query_attention_mask,
+                inputs_embeds=query_tokens_embeds,
+                past_key_values=None,
+                encoder_hidden_states=hidden_states,
+                encoder_attention_mask=attention_mask,
+                output_hidden_states=output_hidden_states,
+                return_dict=return_dict,
+                is_query_tokens=True,
+            )
+            past_key_values = query_outputs.past_key_values
+            # query_outputs.past_key_values = [item[:2] for item in query_outputs.past_key_values]
 
         # Decode
         decoder_outputs = self.decoder(
@@ -1786,8 +1831,8 @@ class T5ForConditionalGeneration(T5PreTrainedModel):
             attention_mask=decoder_attention_mask,
             inputs_embeds=decoder_inputs_embeds,
             past_key_values=past_key_values,
-            encoder_hidden_states=hidden_states,
-            encoder_attention_mask=attention_mask,
+            # encoder_hidden_states=hidden_states,
+            # encoder_attention_mask=attention_mask,
             head_mask=decoder_head_mask,
             cross_attn_head_mask=cross_attn_head_mask,
             use_cache=use_cache,
@@ -1795,6 +1840,23 @@ class T5ForConditionalGeneration(T5PreTrainedModel):
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
         )
+
+
+        # # Decode
+        # decoder_outputs = self.decoder(
+        #     input_ids=decoder_input_ids,
+        #     attention_mask=decoder_attention_mask,
+        #     inputs_embeds=decoder_inputs_embeds,
+        #     past_key_values=past_key_values,
+        #     encoder_hidden_states=hidden_states,
+        #     encoder_attention_mask=attention_mask,
+        #     head_mask=decoder_head_mask,
+        #     cross_attn_head_mask=cross_attn_head_mask,
+        #     use_cache=use_cache,
+        #     output_attentions=output_attentions,
+        #     output_hidden_states=output_hidden_states,
+        #     return_dict=return_dict,
+        # )
 
         sequence_output = decoder_outputs[0]
 

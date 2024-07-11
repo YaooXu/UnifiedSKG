@@ -6,7 +6,7 @@ from torch import nn
 import torch
 
 from .base import PushToHubFriendlyModel
-from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
+from transformers import AutoModelForSeq2SeqLM, AutoTokenizer, AutoConfig
 from models.base_models.modeling_t5_ori import T5ForConditionalGeneration
 
 
@@ -17,8 +17,12 @@ class Model(PushToHubFriendlyModel):
 
         # Load tokenizer and model.
         self.tokenizer = AutoTokenizer.from_pretrained(args.bert.location, use_fast=False)
+        self.config = AutoConfig.from_pretrained(args.bert.location)
+        self.config.num_query_tokens = args.model.num_query_tokens
+
         self.pretrain_model = T5ForConditionalGeneration.from_pretrained(
             args.bert.location,
+            config=self.config
         )
         self.config = self.pretrain_model.config
         self.main_input_name = 'input_ids'
@@ -26,10 +30,9 @@ class Model(PushToHubFriendlyModel):
         if args.special_tokens:
             self.tokenizer.add_tokens([v for k, v in args.special_tokens])
             self.pretrain_model.resize_token_embeddings(len(self.tokenizer))
-
-    def forward(self, input_ids, attention_mask, labels, encoder_position_bias=None):
-        attention_mask = torch.ne(encoder_position_bias, -128)
         
+    def forward(self, input_ids, attention_mask, labels, encoder_position_bias=None):        
+
         loss = self.pretrain_model(
             input_ids=input_ids,
             attention_mask=attention_mask,
@@ -40,8 +43,7 @@ class Model(PushToHubFriendlyModel):
         return {'loss': loss}
 
     def generate(self, input_ids, attention_mask, encoder_position_bias=None, **kwargs):
-        attention_mask = torch.ne(encoder_position_bias, -128)
-
+        
         generated_ids = self.pretrain_model.generate(
             input_ids=input_ids,
             attention_mask=attention_mask,

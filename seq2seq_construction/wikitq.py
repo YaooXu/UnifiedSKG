@@ -70,7 +70,7 @@ def _process_table(process_idx, raw_datasets, tab_processor, is_train=True):
         seq_out = tab_processor.process_output(gold_result)
 
         extend_data.update({"struct_in": linear_table.lower(), "text_in": question.lower(), "seq_out": seq_out.lower()})
-        extend_data["graph"] = tab_processor.table_linearize_func.get_edge_index(linear_table.lower())
+        # extend_data["graph"] = tab_processor.table_linearize_func.get_edge_index(linear_table.lower())
 
         extended_data.append(extend_data)
 
@@ -262,7 +262,7 @@ class TestDataset(Dataset):
 
 if __name__ == "__main__":
     args = Configure.Get("Salesforce/T5_base_finetune_wikitq.cfg")
-    cache_root = os.path.join("output_graph", "cache")
+    cache_root = os.path.join("output", "cache")
 
     os.makedirs(cache_root, exist_ok=True)
     meta_tuning_data = {}

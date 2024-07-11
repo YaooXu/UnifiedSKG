@@ -82,7 +82,7 @@ def main() -> None:
     # We deprecate the k-fold cross-valid function since it causes too many avoidable troubles.
 
     if not args.arg_paths:
-        cache_root = os.path.join("output_graph", "cache")
+        cache_root = os.path.join("output", "cache")
         os.makedirs(cache_root, exist_ok=True)
         raw_datasets_split: datasets.DatasetDict = datasets.load_dataset(
             path=args.dataset.loader_path, cache_dir=args.dataset.data_store_path
@@ -91,7 +91,7 @@ def main() -> None:
             raw_datasets_split, cache_root
         )
     else:
-        cache_root = os.path.join("output_graph", "cache")
+        cache_root = os.path.join("output", "cache")
         os.makedirs(cache_root, exist_ok=True)
         meta_tuning_data = {}
         for task, arg_path in args.arg_paths:
@@ -146,7 +146,7 @@ def main() -> None:
         train_dataset=train_dataset,
         eval_dataset=eval_dataset,
         eval_examples=seq2seq_eval_dataset,
-        data_collator=UniSKGDataCollator(model_tokenizer),
+        data_collator=UniSKGDataCollator(model_tokenizer) if 'graph' in cache_root else None,
         wandb_run_dir=wandb.run.dir if "wandb" in training_args.report_to and training_args.local_rank <= 0 else None,
         callbacks=[early_stopping_callback],
     )
